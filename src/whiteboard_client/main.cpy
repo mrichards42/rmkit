@@ -21,9 +21,11 @@ class JSONSocket:
   struct addrinfo *result, *rp;
   char buf[BUF_SIZE]
   string leftover
-  deque<json> msg_queue
+  deque<json> out_queue
+  deque<json> in_queue
   const char* host
   const char* port
+  thread *read_thread
 
   JSONSocket(const char* host, port):
     sockfd = socket(AF_INET, SOCK_STREAM, 0)
@@ -34,43 +36,61 @@ class JSONSocket:
     hints.ai_protocol = 0;
     self.host = host
     self.port = port
+    self.leftover = ""
 
-    s := getaddrinfo(host, port, &hints, &result)
-    if s != 0:
-      fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
-      exit(EXIT_FAILURE);
+    self.read_thread = new thread([=]() {
+      s := getaddrinfo(host, port, &hints, &result)
+      if s != 0:
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+        exit(EXIT_FAILURE);
 
-    connect(self.sockfd, self.result->ai_addr, self.result->ai_addrlen)
-    leftover = ""
+      while true:
+        err := connect(self.sockfd, self.result->ai_addr, self.result->ai_addrlen)
+        if err == 0:
+            break
+        debug "reconnecting...", err, errno
+        sleep(1)
+
+      self.listen()
+    })
 
   void write(json &j):
-    json_dump := j.dump()
-    msg_c_str := json_dump.c_str()
-    ::write(self.sockfd, msg_c_str, strlen(msg_c_str))
-    ::write(self.sockfd, "\n", 1)
-    return
+      json_dump := j.dump()
+      msg_c_str := json_dump.c_str()
+      ::write(self.sockfd, msg_c_str, strlen(msg_c_str))
+      ::write(self.sockfd, "\n", 1)
 
   void listen():
-    bytes_read := 0
+    bytes_read := -1
     while true:
-      if bytes_read == 0:
-        connect(self.sockfd, self.result->ai_addr, self.result->ai_addrlen)
+      while bytes_read == 0:
+        err := connect(self.sockfd, self.result->ai_addr, self.result->ai_addrlen)
+        if err == 0:
+            break
+        debug "reconnecting...", err, errno
+        sleep(1)
       bytes_read = read(sockfd, buf, BUF_SIZE-1)
       buf[bytes_read] = 0
       print bytes_read, buf
       sbuf := string(buf)
       memset(buf, 0, BUF_SIZE)
 
-      msgs := split(sbuf, '\n')
+      msgs := str_utils::split(sbuf, '\n')
       if leftover != "" && msgs.size() > 0:
         msgs[0] = leftover + msgs[0]
         leftover = ""
-      if sbuf[sbuf.length()-1] == '\n':
+      if sbuf[sbuf.length()-1] != '\n':
+        debug "LEFTOVER FOUND"
         leftover = msgs.back()
         msgs.pop_back()
+      debug "msgs", msgs.size()
       for (i:=0; i!=msgs.size(); ++i):
-        msg_json := json::parse(msgs[i].begin(), msgs[i].end())
-        msg_queue.push_back(msg_json)
+        try:
+            msg_json := json::parse(msgs[i].begin(), msgs[i].end())
+            out_queue.push_back(msg_json)
+        catch(...):
+            debug "COULDNT PARSE", msgs[i]
+      debug "out queue in JSONSocket", self.out_queue.size()
 
 
 class Note: public ui::Widget:
@@ -81,7 +101,8 @@ class Note: public ui::Widget:
   JSONSocket *socket
 
   Note(int x, y, w, h, JSONSocket* s): Widget(x, y, w, h):
-    vfb = new framebuffer::FileFB("note.raw", self.fb->width, self.fb->height)
+    vfb = new framebuffer::VirtualFB(self.fb->width, self.fb->height)
+    vfb->clear_screen()
     self.full_redraw = true
     self.socket = s
 
@@ -97,7 +118,7 @@ class Note: public ui::Widget:
 
     width := 1
     if prevx != -1:
-      vfb->draw_line(prevx, prevy, ev.x, ev.y, width, BLACK)
+      vfb->draw_line(prevx, prevy, ev.x, ev.y, width, GRAY)
       self.dirty = 1
 
       json j
@@ -147,13 +168,25 @@ class App:
 
   def handle_key_event(input::SynKeyEvent ev):
     // pressing any button will clear the screen
+    debug "CLEARING SCREEN"
     note->vfb->clear_screen()
     ui::MainLoop::fb->clear_screen()
+
+  def handle_server_response():
+    for (i:=0; i < socket->out_queue.size(); i++):
+      j := socket->out_queue[i]
+      debug "DRAWING LINE FROM SERVER"
+      try:
+        note->vfb->draw_line(j["prevx"], j["prevy"], j["x"], j["y"], j["width"], j["color"])
+      catch(...):
+        debug "COULDN'T PARSE RESPONSE FROM SERVER"
+    socket->out_queue.clear()
 
   def run():
     ui::MainLoop::key_event += PLS_DELEGATE(self.handle_key_event)
 
     while true:
+      self.handle_server_response()
       ui::MainLoop::main()
       ui::MainLoop::redraw()
       ui::MainLoop::read_input()
