@@ -171,9 +171,10 @@ class App:
 
   def handle_key_event(input::SynKeyEvent ev):
     // pressing any button will clear the screen
-    debug "CLEARING SCREEN"
-    note->vfb->clear_screen()
-    ui::MainLoop::fb->clear_screen()
+    if ev.key == KEY_LEFT:
+      debug "CLEARING SCREEN"
+      note->vfb->clear_screen()
+      ui::MainLoop::fb->clear_screen()
 
   def handle_server_response():
     socket->out_queue_m.lock()
