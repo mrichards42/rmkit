@@ -44,13 +44,6 @@ class JSONSocket:
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
         exit(EXIT_FAILURE);
 
-      while true:
-        err := connect(self.sockfd, self.result->ai_addr, self.result->ai_addrlen)
-        if err == 0:
-            break
-        debug "reconnecting...", err, errno
-        sleep(1)
-
       self.listen()
     })
 
@@ -63,15 +56,21 @@ class JSONSocket:
   void listen():
     bytes_read := -1
     while true:
-      while bytes_read == 0:
+      while bytes_read <= 0:
         err := connect(self.sockfd, self.result->ai_addr, self.result->ai_addrlen)
-        if err == 0:
+        if err == 0 || errno == EISCONN:
+            debug "(re)connected"
             break
-        debug "reconnecting...", err, errno
+        debug "(re)connecting...", err, errno
         sleep(1)
       bytes_read = read(sockfd, buf, BUF_SIZE-1)
+      print "bytes read", bytes_read, buf
+      if bytes_read <= 0:
+          close(self.sockfd)
+          self.sockfd = socket(AF_INET, SOCK_STREAM, 0)
+          sleep(1)
+          continue
       buf[bytes_read] = 0
-      print bytes_read, buf
       sbuf := string(buf)
       memset(buf, 0, BUF_SIZE)
 
@@ -91,12 +90,13 @@ class JSONSocket:
         catch(...):
             debug "COULDNT PARSE", msgs[i]
       debug "out queue in JSONSocket", self.out_queue.size()
+      ui::TaskQueue::wakeup()
 
 
 class Note: public ui::Widget:
   public:
   int prevx = -1, prevy = -1
-  framebuffer::FileFB *vfb
+  framebuffer::VirtualFB *vfb
   bool full_redraw
   JSONSocket *socket
 
@@ -178,6 +178,7 @@ class App:
       debug "DRAWING LINE FROM SERVER"
       try:
         note->vfb->draw_line(j["prevx"], j["prevy"], j["x"], j["y"], j["width"], j["color"])
+        note->dirty = 1
       catch(...):
         debug "COULDN'T PARSE RESPONSE FROM SERVER"
     socket->out_queue.clear()
