@@ -14,6 +14,13 @@
 
 using json = nlohmann::json
 
+using PLS::Observable
+class AppState:
+  public:
+  Observable<bool> erase
+  Observable<string> room
+AppState STATE
+
 class JSONSocket:
   public:
   int sockfd
@@ -26,9 +33,10 @@ class JSONSocket:
   const char* host
   const char* port
   thread *read_thread
+  bool _connected = false
 
   JSONSocket(const char* host, port):
-    sockfd = socket(AF_INET, SOCK_STREAM, 0)
+    sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_DGRAM;
@@ -50,8 +58,20 @@ class JSONSocket:
   void write(json &j):
       json_dump := j.dump()
       msg_c_str := json_dump.c_str()
+
+      self.out_queue_m.lock()
+      c := self._connected
+      self.out_queue_m.unlock()
+
+      if !c || self.sockfd < 3:
+        debug "CANT WRITE TO SOCKET"
+        return
+
+      // MOVE TO SEPARATE THREAD
+      debug "WRITING TO SOCKET", self.sockfd
       ::write(self.sockfd, msg_c_str, strlen(msg_c_str))
       ::write(self.sockfd, "\n", 1)
+      debug "WROTE TO SOCKET"
 
   void listen():
     bytes_read := -1
@@ -60,14 +80,24 @@ class JSONSocket:
         err := connect(self.sockfd, self.result->ai_addr, self.result->ai_addrlen)
         if err == 0 || errno == EISCONN:
             debug "(re)connected"
+            self.out_queue_m.lock()
+            self._connected = true
+            self.out_queue_m.unlock()
             break
         debug "(re)connecting...", err, errno
+        self.out_queue_m.lock()
+        self._connected = false
+        self.out_queue_m.unlock()
         sleep(1)
+
       bytes_read = read(sockfd, buf, BUF_SIZE-1)
-      debug "bytes read", bytes_read, buf
+      // debug "bytes read", bytes_read, buf
       if bytes_read <= 0:
+        if bytes_read == -1 and errno == EAGAIN:
+            continue
+
           close(self.sockfd)
-          self.sockfd = socket(AF_INET, SOCK_STREAM, 0)
+          self.sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)
           sleep(1)
           continue
       buf[bytes_read] = 0
@@ -81,7 +111,7 @@ class JSONSocket:
       if sbuf[sbuf.length()-1] != '\n':
         leftover = msgs.back()
         msgs.pop_back()
-      debug "msgs", msgs.size()
+      // debug "msgs", msgs.size()
       for (i:=0; i!=msgs.size(); ++i):
         try:
             msg_json := json::parse(msgs[i].begin(), msgs[i].end())
@@ -91,9 +121,9 @@ class JSONSocket:
         catch(...):
             debug "COULDNT PARSE", msgs[i]
 
-      out_queue_m.lock()
-      debug "out queue in JSONSocket", self.out_queue.size()
-      out_queue_m.unlock()
+      // out_queue_m.lock()
+      // debug "out queue in JSONSocket", self.out_queue.size()
+      // out_queue_m.unlock()
 
       ui::TaskQueue::wakeup()
 
@@ -119,6 +149,7 @@ class Note: public ui::Widget:
     return input::is_touch_event(ev) != NULL
 
   void on_mouse_move(input::SynMotionEvent &ev):
+    debug "MOVIN MOUSE"
     width := 5
     if prevx != -1:
       vfb->draw_line(prevx, prevy, ev.x, ev.y, width, GRAY)
@@ -130,7 +161,7 @@ class Note: public ui::Widget:
       j["x"] = ev.x
       j["y"] = ev.y
       j["width"] = width
-      j["color"] = BLACK
+      j["color"] = STATE.erase ? WHITE : BLACK
 
       self.socket->write(j)
 
@@ -151,6 +182,29 @@ class Note: public ui::Widget:
     self.fb->dirty = 1
     framebuffer::reset_dirty(vfb->dirty_area)
 
+
+class EraseButton: public ui::Button:
+  public:
+  EraseButton(int x, y, w, h): Button(x, y, w, h, "erase"):
+    pass
+
+  void on_mouse_down(input::SynMotionEvent &ev):
+    STATE.erase = !STATE.erase
+    debug "SETTING ERASER TO", STATE.erase
+    self.dirty = 1
+
+  void render():
+    ui::Button::render()
+    if STATE.erase:
+      fb->draw_rect(self.x, self.y, self.w, self.h, 2, BLACK, 0 /* fill */)
+
+class RoomInput: public ui::TextInput:
+  public:
+  RoomInput(int x, y, w, h): TextInput(x, y, w, h, "default"):
+    self->events.done += PLS_LAMBDA(string &s):
+      debug "SETTING ROOM TO", s
+    ;
+
 class App:
   public:
   Note *note
@@ -166,8 +220,21 @@ class App:
     w, h = fb->get_display_size()
 
     socket = new JSONSocket("rmkit.dev", "65432")
-    note = new Note(0, 0, w, h, socket)
+    note = new Note(0, 0, w, h-50, socket)
     demo_scene->add(note)
+
+    button_bar := new ui::HorizontalLayout(0, 0, w, 50, demo_scene)
+    hbar := new ui::VerticalLayout(0, 0, w, h, demo_scene)
+    hbar->pack_end(button_bar)
+
+    erase_button := new EraseButton(0, 0, 200, 50)
+    room_label := new ui::Text(0, 0, 200, 50, "room: ")
+    room_label->justify = ui::Text::JUSTIFY::RIGHT
+    room_button := new RoomInput(0, 0, 200, 50)
+
+    button_bar->pack_start(erase_button)
+    button_bar->pack_end(room_button)
+    button_bar->pack_end(room_label)
 
   def handle_key_event(input::SynKeyEvent ev):
     // pressing any button will clear the screen
@@ -180,7 +247,6 @@ class App:
     socket->out_queue_m.lock()
     for (i:=0; i < socket->out_queue.size(); i++):
       j := socket->out_queue[i]
-      debug "DRAWING LINE FROM SERVER", j
       try:
         note->vfb->draw_line(j["prevx"], j["prevy"], j["x"], j["y"], j["width"], j["color"])
         note->dirty = 1
