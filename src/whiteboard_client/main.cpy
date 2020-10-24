@@ -8,9 +8,23 @@
 #include <iostream>
 #include "../build/rmkit.h"
 #include "../vendor/json/json.hpp"
+#define BACKWARD_HAS_DW 1
+#include "../vendor/backward/backward.hpp"
 #include "../shared/string.h"
 
 #define BUF_SIZE 1024
+
+namespace backward {
+
+backward::SignalHandling sh;
+
+} // namespace backward
+
+// message types
+#define TINIT "init"
+#define TJOIN "join"
+#define TDRAW "draw"
+#define TCLEAR "clear"
 
 using json = nlohmann::json
 
@@ -29,14 +43,14 @@ class JSONSocket:
   char buf[BUF_SIZE]
   string leftover
   deque<json> out_queue
-  std::mutex out_queue_m
+  std::mutex lock
+  deque<json> in_queue
   const char* host
   const char* port
-  thread *read_thread
   bool _connected = false
 
   JSONSocket(const char* host, port):
-    sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)
+    sockfd = socket(AF_INET, SOCK_STREAM, 0)
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_DGRAM;
@@ -46,7 +60,7 @@ class JSONSocket:
     self.port = port
     self.leftover = ""
 
-    self.read_thread = new thread([=]() {
+    new thread([=]() {
       s := getaddrinfo(host, port, &hints, &result)
       if s != 0:
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
@@ -55,23 +69,38 @@ class JSONSocket:
       self.listen()
     })
 
-  void write(json &j):
-      json_dump := j.dump()
-      msg_c_str := json_dump.c_str()
+    new thread([=]() {
+      self.write_loop();
+    })
 
-      self.out_queue_m.lock()
-      c := self._connected
-      self.out_queue_m.unlock()
-
-      if !c || self.sockfd < 3:
+  void write_loop():
+    while true:
+      if self.sockfd < 3:
         debug "CANT WRITE TO SOCKET"
-        return
+        sleep(1)
+        continue
 
-      // MOVE TO SEPARATE THREAD
-      debug "WRITING TO SOCKET", self.sockfd
-      ::write(self.sockfd, msg_c_str, strlen(msg_c_str))
-      ::write(self.sockfd, "\n", 1)
-      debug "WROTE TO SOCKET"
+      self.lock.lock()
+      if !self._connected:
+        // wait for listen() to reconnect
+        self.lock.unlock()
+        sleep(1)
+        continue
+
+      for (i:=0;i<self.in_queue.size();i++):
+        json_dump := self.in_queue[i].dump()
+        msg_c_str := json_dump.c_str()
+        debug "WRITING TO SOCKET", self.sockfd
+        ::send(self.sockfd, msg_c_str, strlen(msg_c_str), MSG_DONTWAIT)
+        ::send(self.sockfd, "\n", 1, MSG_DONTWAIT)
+        debug "WROTE TO SOCKET"
+      self.in_queue.clear()
+      self.lock.unlock()
+
+  void write(json &j):
+    self.lock.lock()
+    self.in_queue.push_back(j);
+    self.lock.unlock()
 
   void listen():
     bytes_read := -1
@@ -80,14 +109,15 @@ class JSONSocket:
         err := connect(self.sockfd, self.result->ai_addr, self.result->ai_addrlen)
         if err == 0 || errno == EISCONN:
             debug "(re)connected"
-            self.out_queue_m.lock()
+            self.lock.lock()
             self._connected = true
-            self.out_queue_m.unlock()
+            self.lock.unlock()
             break
         debug "(re)connecting...", err, errno
-        self.out_queue_m.lock()
+        self.lock.lock()
+        close(self.sockfd)
         self._connected = false
-        self.out_queue_m.unlock()
+        self.lock.unlock()
         sleep(1)
 
       bytes_read = read(sockfd, buf, BUF_SIZE-1)
@@ -97,7 +127,7 @@ class JSONSocket:
             continue
 
           close(self.sockfd)
-          self.sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)
+          self.sockfd = socket(AF_INET, SOCK_STREAM, 0)
           sleep(1)
           continue
       buf[bytes_read] = 0
@@ -115,15 +145,15 @@ class JSONSocket:
       for (i:=0; i!=msgs.size(); ++i):
         try:
             msg_json := json::parse(msgs[i].begin(), msgs[i].end())
-            out_queue_m.lock()
+            lock.lock()
             out_queue.push_back(msg_json)
-            out_queue_m.unlock()
+            lock.unlock()
         catch(...):
             debug "COULDNT PARSE", msgs[i]
 
-      // out_queue_m.lock()
+      // lock.lock()
       // debug "out queue in JSONSocket", self.out_queue.size()
-      // out_queue_m.unlock()
+      // lock.unlock()
 
       ui::TaskQueue::wakeup()
 
@@ -150,12 +180,13 @@ class Note: public ui::Widget:
 
   void on_mouse_move(input::SynMotionEvent &ev):
     debug "MOVIN MOUSE"
-    width := 5
+    width := STATE.erase ? 20 : 5
     if prevx != -1:
       vfb->draw_line(prevx, prevy, ev.x, ev.y, width, GRAY)
       self.dirty = 1
 
       json j
+      j["type"] = TDRAW
       j["prevx"] = prevx
       j["prevy"] = prevy
       j["x"] = ev.x
@@ -193,17 +224,24 @@ class EraseButton: public ui::Button:
     debug "SETTING ERASER TO", STATE.erase
     self.dirty = 1
 
-  void render():
-    ui::Button::render()
-    if STATE.erase:
-      fb->draw_rect(self.x, self.y, self.w, self.h, 2, BLACK, 0 /* fill */)
+  void before_render():
+   if STATE.erase:
+     self.textWidget->text = "pen"
+   else:
+     self.textWidget->text = "eraser"
+   ui::Button::before_render()
+
 
 class RoomInput: public ui::TextInput:
   public:
-  RoomInput(int x, y, w, h): TextInput(x, y, w, h, "default"):
+  JSONSocket *socket
+
+  RoomInput(int x, y, w, h, JSONSocket *sock): TextInput(x, y, w, h, "default"):
     self->events.done += PLS_LAMBDA(string &s):
       debug "SETTING ROOM TO", s
     ;
+    self.socket = sock
+
 
 class App:
   public:
@@ -230,11 +268,17 @@ class App:
     erase_button := new EraseButton(0, 0, 200, 50)
     room_label := new ui::Text(0, 0, 200, 50, "room: ")
     room_label->justify = ui::Text::JUSTIFY::RIGHT
-    room_button := new RoomInput(0, 0, 200, 50)
+    room_button := new RoomInput(0, 0, 200, 50, socket)
 
     button_bar->pack_start(erase_button)
     button_bar->pack_end(room_button)
     button_bar->pack_end(room_label)
+
+    // we are not connected to socket just yet
+    json j
+    j["type"] = TJOIN
+    j["room"] = "other"
+    socket->write(j)
 
   def handle_key_event(input::SynKeyEvent ev):
     // pressing any button will clear the screen
@@ -244,16 +288,25 @@ class App:
       ui::MainLoop::fb->clear_screen()
 
   def handle_server_response():
-    socket->out_queue_m.lock()
+    socket->lock.lock()
     for (i:=0; i < socket->out_queue.size(); i++):
       j := socket->out_queue[i]
       try:
-        note->vfb->draw_line(j["prevx"], j["prevy"], j["x"], j["y"], j["width"], j["color"])
-        note->dirty = 1
+        if j["type"] == TINIT:
+          // TODO
+          pass
+        else if j["type"] == TDRAW:
+          note->vfb->draw_line(j["prevx"], j["prevy"], j["x"], j["y"], j["width"], j["color"])
+          note->dirty = 1
+        else if j["type"] == TCLEAR:
+          // TODO
+          pass
+        else:
+          debug "unknown message type"
       catch(...):
         debug "COULDN'T PARSE RESPONSE FROM SERVER", j
     socket->out_queue.clear()
-    socket->out_queue_m.unlock()
+    socket->lock.unlock()
 
   def run():
     ui::MainLoop::key_event += PLS_DELEGATE(self.handle_key_event)
