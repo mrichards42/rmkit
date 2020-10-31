@@ -230,13 +230,12 @@ class RoomInput: public ui::TextInput:
 
   RoomInput(int x, y, w, h, JSONSocket *sock): TextInput(x, y, w, h, "default"):
     self->events.done += PLS_LAMBDA(string &s):
-      debug "SETTING ROOM TO", s
-      // we are not connected to socket just yet
-      json j
-      j["type"] = TJOIN
-      j["room"] = s
-      sock->write(j)
+      self.join(s)
     ;
+
+  void join(string room):
+    debug "SETTING ROOM TO", room
+    STATE.room = room
 
 
 class App:
@@ -271,11 +270,28 @@ class App:
     button_bar->pack_end(room_button)
     button_bar->pack_end(room_label)
 
+    STATE.room(PLS_DELEGATE(self.join_room))
+    room_button->join("default")
+
+
+  void join_room(string room):
     // we are not connected to socket just yet
     json j
     j["type"] = TJOIN
-    j["room"] = "other"
+    j["room"] = room
     socket->write(j)
+    // hit URL for downloading room image
+    url := "http://rmkit.dev:65431/room/" + room
+    room_file := "/tmp/room_" + room
+    curl_cmd := "curl " + url  + " > " + room_file
+    ret := system(curl_cmd.c_str())
+
+    if ret != 0:
+        debug "ERROR WITH CURL?"
+    else:
+        debug "DISPLAYING IMAGE"
+        self.note->vfb->load_from_png(room_file)
+        ui::MainLoop::full_refresh()
 
   def handle_key_event(input::SynKeyEvent ev):
     // pressing any button will clear the screen
@@ -290,10 +306,7 @@ class App:
     for (i:=0; i < socket->out_queue.size(); i++):
       j := socket->out_queue[i]
       try:
-        if j["type"] == TINIT:
-          // TODO
-          pass
-        else if j["type"] == TDRAW:
+        if j["type"] == TDRAW:
           note->vfb->draw_line(j["prevx"], j["prevy"], j["x"], j["y"], j["width"], j["color"])
           note->dirty = 1
           button_bar->refresh()
