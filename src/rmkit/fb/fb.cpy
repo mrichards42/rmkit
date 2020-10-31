@@ -639,7 +639,6 @@ namespace framebuffer:
       r := self.dirty_area
       self.swtfb.mark_dirty({ r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0 })
       self.swtfb.redraw_screen(full_screen)
-      self.swtfb.reset_dirty()
       reset_dirty(self.dirty_area)
       return 0
 

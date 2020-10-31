@@ -109,10 +109,20 @@ namespace input:
           slot = data.value;
 
         case ABS_MT_POSITION_X:
-          slots[slot].x = self.x = (MTWIDTH - data.value)*MT_X_SCALAR
+          val := data.value
+          #ifndef REMARKABLE2
+          val = (MTWIDTH - data.value)*MT_X_SCALAR
+          #endif
+
+          slots[slot].x = self.x = val
+          debug "ABS X", data.value, "CALC", self.x
           break
         case ABS_MT_POSITION_Y:
+          slots[slot].y = self.y = (DISPLAYHEIGHT - data.value)
+          #ifndef REMARKABLE2
           slots[slot].y = self.y = (MTHEIGHT - data.value)*MT_Y_SCALAR
+          #endif
+          debug "ABS Y", data.value, "CALC", self.y
           break
         case ABS_MT_TRACKING_ID:
           slots[slot].left = self.left = data.value > -1

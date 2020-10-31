@@ -4,8 +4,8 @@
 using namespace std
 
 int FONT_SIZE = ui::Text::DEFAULT_FS
-WIDTH := 0
-HEIGHT := 0
+_width := 0
+_height := 0
 EXPECTING_INPUT := false
 CLEAR_SCREEN := true
 TIMEOUT := 0
@@ -111,12 +111,12 @@ auto parse_widget(int line_no, vector<string> tokens):
 
   // for w, h, we have "w" and "h" as keywords, but i think
   // "full" might make more sense (instead of using w vs h)
-  w := WIDTH
-  h := HEIGHT
+  w := _width
+  h := _height
   if w_token != "w":
-    w = parse_to_int(w_token, line_no, WIDTH)
+    w = parse_to_int(w_token, line_no, _width)
   if h_token != "h":
-    h = parse_to_int(h_token, line_no, HEIGHT)
+    h = parse_to_int(h_token, line_no, _height)
 
   // TODO: add "%" format
   // TODO: % format might also need to be implemented for padding?
@@ -131,7 +131,7 @@ auto parse_widget(int line_no, vector<string> tokens):
         x = LAST_WIDGET->x
 
   else:
-    x = parse_to_int(x_token, line_no, WIDTH)
+    x = parse_to_int(x_token, line_no, _width)
 
   if y_token == "next" or y_token == "same" or y_token == "step" or y_token == "stay":
     if LAST_WIDGET == NULL:
@@ -143,7 +143,7 @@ auto parse_widget(int line_no, vector<string> tokens):
       if y_token == "same" or y_token == "stay":
         y = LAST_WIDGET->y
   else:
-    y = parse_to_int(y_token, line_no, HEIGHT)
+    y = parse_to_int(y_token, line_no, _height)
 
   string t
   for it := tokens.begin() + 5; it != tokens.end(); it++:
@@ -249,7 +249,7 @@ def main():
   ui::MainLoop::set_scene(scene)
 
   fb := framebuffer::get()
-  WIDTH, HEIGHT = fb->get_display_size()
+  _width, _height = fb->get_display_size()
 
   string line
   line_no := 0
