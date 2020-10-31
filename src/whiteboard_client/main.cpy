@@ -8,17 +8,16 @@
 #include <iostream>
 #include "../build/rmkit.h"
 #include "../vendor/json/json.hpp"
-#define BACKWARD_HAS_DW 1
-#include "../vendor/backward/backward.hpp"
 #include "../shared/string.h"
 
 #define BUF_SIZE 1024
 
-namespace backward {
-
-backward::SignalHandling sh;
-
-} // namespace backward
+// TODO:
+// * implement TINIT
+// * implement latency calculation (while drawing?)
+// * implement room counter
+// * implement shared clear
+// * implement undrawing when server doesn't respond within time limit
 
 // message types
 #define TINIT "init"
@@ -27,6 +26,9 @@ backward::SignalHandling sh;
 #define TCLEAR "clear"
 
 using json = nlohmann::json
+
+HOST := getenv("HOST") ? getenv("HOST") : "rmkit.dev"
+PORT := getenv("PORT") ? getenv("PORT") : "65432"
 
 using PLS::Observable
 class AppState:
@@ -90,10 +92,8 @@ class JSONSocket:
       for (i:=0;i<self.in_queue.size();i++):
         json_dump := self.in_queue[i].dump()
         msg_c_str := json_dump.c_str()
-        debug "WRITING TO SOCKET", self.sockfd
         ::send(self.sockfd, msg_c_str, strlen(msg_c_str), MSG_DONTWAIT)
         ::send(self.sockfd, "\n", 1, MSG_DONTWAIT)
-        debug "WROTE TO SOCKET"
       self.in_queue.clear()
       self.lock.unlock()
 
@@ -121,7 +121,6 @@ class JSONSocket:
         sleep(1)
 
       bytes_read = read(sockfd, buf, BUF_SIZE-1)
-      // debug "bytes read", bytes_read, buf
       if bytes_read <= 0:
         if bytes_read == -1 and errno == EAGAIN:
             continue
@@ -141,7 +140,6 @@ class JSONSocket:
       if sbuf[sbuf.length()-1] != '\n':
         leftover = msgs.back()
         msgs.pop_back()
-      // debug "msgs", msgs.size()
       for (i:=0; i!=msgs.size(); ++i):
         try:
             msg_json := json::parse(msgs[i].begin(), msgs[i].end())
@@ -150,10 +148,6 @@ class JSONSocket:
             lock.unlock()
         catch(...):
             debug "COULDNT PARSE", msgs[i]
-
-      // lock.lock()
-      // debug "out queue in JSONSocket", self.out_queue.size()
-      // lock.unlock()
 
       ui::TaskQueue::wakeup()
 
@@ -179,7 +173,6 @@ class Note: public ui::Widget:
     return input::is_touch_event(ev) != NULL
 
   void on_mouse_move(input::SynMotionEvent &ev):
-    debug "MOVIN MOUSE"
     width := STATE.erase ? 20 : 5
     if prevx != -1:
       vfb->draw_line(prevx, prevy, ev.x, ev.y, width, GRAY)
@@ -234,19 +227,23 @@ class EraseButton: public ui::Button:
 
 class RoomInput: public ui::TextInput:
   public:
-  JSONSocket *socket
 
   RoomInput(int x, y, w, h, JSONSocket *sock): TextInput(x, y, w, h, "default"):
     self->events.done += PLS_LAMBDA(string &s):
       debug "SETTING ROOM TO", s
+      // we are not connected to socket just yet
+      json j
+      j["type"] = TJOIN
+      j["room"] = s
+      sock->write(j)
     ;
-    self.socket = sock
 
 
 class App:
   public:
   Note *note
   JSONSocket *socket
+  ui::HorizontalLayout *button_bar
 
   App():
     demo_scene := ui::make_scene()
@@ -257,11 +254,11 @@ class App:
     fb->redraw_screen()
     w, h = fb->get_display_size()
 
-    socket = new JSONSocket("rmkit.dev", "65432")
+    socket = new JSONSocket(HOST, PORT)
     note = new Note(0, 0, w, h-50, socket)
     demo_scene->add(note)
 
-    button_bar := new ui::HorizontalLayout(0, 0, w, 50, demo_scene)
+    button_bar = new ui::HorizontalLayout(0, 0, w, 50, demo_scene)
     hbar := new ui::VerticalLayout(0, 0, w, h, demo_scene)
     hbar->pack_end(button_bar)
 
@@ -286,6 +283,7 @@ class App:
       debug "CLEARING SCREEN"
       note->vfb->clear_screen()
       ui::MainLoop::fb->clear_screen()
+      button_bar->refresh()
 
   def handle_server_response():
     socket->lock.lock()
@@ -298,6 +296,7 @@ class App:
         else if j["type"] == TDRAW:
           note->vfb->draw_line(j["prevx"], j["prevy"], j["x"], j["y"], j["width"], j["color"])
           note->dirty = 1
+          button_bar->refresh()
         else if j["type"] == TCLEAR:
           // TODO
           pass
