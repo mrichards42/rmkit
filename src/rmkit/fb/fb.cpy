@@ -17,6 +17,7 @@
 #include "../util/image.h"
 #include "../../vendor/stb/stb_image.h"
 #include "../../vendor/stb/stb_image_write.h"
+#include "../../vendor/librm2fb.hpp"
 
 using namespace std
 
@@ -624,6 +625,25 @@ namespace framebuffer:
       #endif
       return 0
 
+  class SwtFB: public FB:
+    swtfb::SwtFB swtfb
+    public:
+    SwtFB(int w, h): FB():
+      self.width = w
+      self.height = h
+      self.byte_size = self.width * self.height * sizeof(remarkable_color)
+      self.fbmem = (remarkable_color*) swtfb.fbmem
+      self.fd = -1
+
+    int perform_redraw(bool full_screen=false):
+      r := self.dirty_area
+      self.swtfb.mark_dirty({ r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0 })
+      self.swtfb.redraw_screen(full_screen)
+      self.swtfb.reset_dirty()
+      reset_dirty(self.dirty_area)
+      return 0
+
+
   class VirtualFB: public FB:
     public:
     VirtualFB(int w, h): FB():
@@ -694,7 +714,9 @@ namespace framebuffer:
     if _FB != nullptr && _FB.get() != nullptr:
       return _FB
 
-    #ifdef REMARKABLE
+    #ifdef REMARKABLE2
+    _FB = make_shared<framebuffer::SwtFB>(DISPLAYWIDTH, DISPLAYHEIGHT)
+    #elif REMARKABLE
     _FB = make_shared<framebuffer::RemarkableFB>()
     #elif DEV
     _FB = make_shared<framebuffer::FileFB>()
