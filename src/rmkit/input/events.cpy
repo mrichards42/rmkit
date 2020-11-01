@@ -111,18 +111,19 @@ namespace input:
         case ABS_MT_POSITION_X:
           val := data.value
           #ifndef REMARKABLE2
+          // this is rM1 logic
+          // TODO: how to do this by reading ioctls?
           val = (MTWIDTH - data.value)*MT_X_SCALAR
           #endif
 
           slots[slot].x = self.x = val
-          debug "ABS X", data.value, "CALC", self.x
           break
         case ABS_MT_POSITION_Y:
           slots[slot].y = self.y = (DISPLAYHEIGHT - data.value)
           #ifndef REMARKABLE2
+          // This is rM1 logic
           slots[slot].y = self.y = (MTHEIGHT - data.value)*MT_Y_SCALAR
           #endif
-          debug "ABS Y", data.value, "CALC", self.y
           break
         case ABS_MT_TRACKING_ID:
           slots[slot].left = self.left = data.value > -1

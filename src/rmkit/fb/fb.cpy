@@ -147,8 +147,8 @@ namespace framebuffer:
     virtual void set_screen_depth(int d):
       return
 
-    tuple<int,int> get_size():
-      #ifdef DEV
+    virtual tuple<int,int> get_size():
+      #if defined(DEV) || defined(REMARKABLE2)
       width = DISPLAYWIDTH
       height = DISPLAYHEIGHT
       return width, height
