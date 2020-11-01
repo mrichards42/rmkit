@@ -16,11 +16,6 @@
 #include <linux/limits.h>
 
 namespace swtfb {
-namespace ipc {
-
-using namespace std;
-enum MSG_TYPE { INIT_t = 1, UPDATE_t };
-
 // from mxcfb.h {{{
 // NOTE: i put left in front of top instead of after
 struct mxcfb_rect {
@@ -49,6 +44,42 @@ struct mxcfb_update_data {
 typedef struct mxcfb_rect swtfb_rect;
 typedef struct mxcfb_update_data swtfb_update;
 
+int WIDTH = 1404;
+int HEIGHT = 1872;
+inline void reset_dirty(swtfb_rect &dirty_area) {
+  dirty_area.left = WIDTH;
+  dirty_area.top = HEIGHT;
+  dirty_area.width = 0;
+  dirty_area.height = 0;
+}
+
+inline void mark_dirty(swtfb_rect &dirty_area, swtfb_rect &rect) {
+  uint32_t x1 = dirty_area.left + dirty_area.width;
+  uint32_t y1 = dirty_area.top + dirty_area.height;
+
+  x1 = std::max(x1, rect.left + rect.width);
+  y1 = std::max(y1, rect.top + rect.height);
+
+  if (x1 > WIDTH) {
+    x1 = WIDTH - 1;
+  }
+  if (y1 > HEIGHT) {
+    y1 = HEIGHT - 1;
+  }
+
+  dirty_area.left = std::min(rect.left, dirty_area.left);
+  dirty_area.top = std::min(rect.top, dirty_area.top);
+
+  dirty_area.width = x1 - dirty_area.left;
+  dirty_area.height = y1 - dirty_area.top;
+}
+
+namespace ipc {
+
+using namespace std;
+enum MSG_TYPE { INIT_t = 1, UPDATE_t };
+
+
 const int maxWidth = 1404;
 const int maxHeight = 1872;
 int BUF_SIZE = maxWidth * maxHeight *
@@ -67,7 +98,8 @@ static uint16_t *get_shared_buffer(string name = "/swtfb.01") {
   ftruncate(fd, BUF_SIZE);
   uint16_t *mem =
       (uint16_t *)mmap(NULL, BUF_SIZE, PROT_WRITE, MAP_SHARED, fd, 0);
-  printf("OPENED SHARED MEM: /dev/shm%s\n", name.c_str());
+  printf("OPENED SHARED MEM: /dev/shm%s at %x\n", name.c_str(), mem);
+  printf("errno: %i\n", errno);
   return mem;
 }
 
@@ -86,13 +118,12 @@ public:
     auto rect = msg.update_region;
     msg.mtype = SWTFB1_UPDATE;
 
-    cout << msg.mtype << " MSG Q SEND " << rect.left << " " << rect.top << " " << rect.width << " "
-         << rect.height << endl;
+    cout << msg.mtype << " MSG Q SEND " << rect.left << " " << rect.top << " "
+         << rect.width << " " << rect.height << endl;
     int wrote = msgsnd(msqid, (void *)&msg, sizeof(msg), 0);
     if (wrote != 0) {
       cout << "ERRNO " << errno << endl;
     }
-
   }
 
   swtfb_update recv() {
@@ -133,8 +164,8 @@ ipc::Queue MSGQ(msg_q_id);
 class SwtFB {
 public:
   uint16_t *fbmem;
-  ipc::swtfb_update update;
-  ipc::swtfb_rect dirty_area;
+  swtfb_update update;
+  swtfb_rect dirty_area;
 
   SwtFB() {
     fbmem = ipc::get_shared_buffer();
@@ -142,39 +173,15 @@ public:
   }
 
   void reset_dirty() {
-    dirty_area.left = WIDTH;
-    dirty_area.top = HEIGHT;
-    dirty_area.width = 0;
-    dirty_area.height = 0;
+    swtfb::reset_dirty(dirty_area);
   }
 
-  void mark_dirty(ipc::swtfb_rect &&rect) { mark_dirty(rect); }
-
-  void mark_dirty(ipc::swtfb_rect &rect) {
-    uint32_t x1 = dirty_area.left + dirty_area.width;
-    uint32_t y1 = dirty_area.top + dirty_area.height;
-
-    x1 = std::max(x1, rect.left + rect.width);
-    y1 = std::max(y1, rect.top + rect.height);
-
-    if (x1 > WIDTH) {
-      x1 = WIDTH - 1;
-    }
-    if (y1 > HEIGHT) {
-      y1 = HEIGHT - 1;
-    }
-
-    dirty_area.left = std::min(rect.left, dirty_area.left);
-    dirty_area.top = std::min(rect.top, dirty_area.top);
-
-    dirty_area.width = x1 - dirty_area.left;
-    dirty_area.height = y1 - dirty_area.top;
-  }
+  void mark_dirty(swtfb_rect &&rect) { swtfb::mark_dirty(dirty_area, rect); }
 
   void redraw_screen(bool full_refresh = false) {
-    ipc::swtfb_update update;
+    swtfb_update update;
     if (full_refresh || dirty_area.width <= 0 || dirty_area.height <= 0) {
-      ipc::swtfb_rect buf = {};
+      swtfb_rect buf = {};
       buf.left = 0;
       buf.top = 0;
       buf.width = 1404;
