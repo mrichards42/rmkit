@@ -106,8 +106,8 @@ namespace framebuffer:
 
     // function: clear_screen
     // blanks the framebuffer with WHITE pixels
-    void clear_screen():
-      self.draw_rect(0, 0, self.width, self.height, WHITE)
+    void clear_screen(remarkable_color color=WHITE):
+      self.draw_rect(0, 0, self.width, self.height, color)
 
     // function: redraw_screen
     // if the framebuffer is dirty, redraws the dirty area

@@ -293,6 +293,7 @@ class App: public IApp:
       while true:
         now := time(NULL)
         usb_in := false
+        // TODO: use the correct string here
         usb_str := string(exec("cat /sys/class/power_supply/imx_usb_charger/present"))
         str_utils::trim(usb_str)
         usb_in = usb_str == string("1")
@@ -520,6 +521,12 @@ class App: public IApp:
       proc::launch_process(app.resume)
     else:
       proc::launch_process(app.bin, true /* check running */, true /* background */)
+      fb->clear_screen(BLACK)
+      fb->redraw_screen()
+      usleep(1000 * 100)
+      fb->clear_screen(WHITE)
+      fb->redraw_screen()
+
 
     // TODO: remove KOReader special codings
     if USE_KOREADER_WORKAROUND and CURRENT_APP == "KOReader":
