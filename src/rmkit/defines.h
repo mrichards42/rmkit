@@ -21,9 +21,12 @@
 #else
 #define SAVE_DIR "./saved_images"
 #endif
+
+int RM_VERSION = 0;
 #ifdef DEV
-// #define DEV_KBD "/dev/input/by-path/pci-0000:24:00.3-usb-0:3.2:1.0-event-kbd"
-// #define DEV_KBD "/dev/input/by-path/platform-i8042-serio-0-event-kbd"
+int DEV_MODE = 1;
+#else
+int DEV_MODE = 0;
 #endif
 
 // {{{ CANVAS RELATED DEFINES

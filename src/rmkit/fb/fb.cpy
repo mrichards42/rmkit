@@ -68,6 +68,7 @@ namespace framebuffer:
     int byte_size = 0, dirty = 0
     int update_marker = 1
     int waveform_mode = WAVEFORM_MODE_DU
+    int rotate = 0; // rotation of the screen in degrees
 
     RESIZE_EVENT resize
 
@@ -148,11 +149,10 @@ namespace framebuffer:
       return
 
     virtual tuple<int,int> get_size():
-      #if defined(DEV) || defined(REMARKABLE2)
-      width = DISPLAYWIDTH
-      height = DISPLAYHEIGHT
-      return width, height
-      #endif
+      if DEV_MODE || RM_VERSION == 2:
+        width = DISPLAYWIDTH
+        height = DISPLAYHEIGHT
+        return width, height
 
       size_f := ifstream("/sys/class/graphics/fb0/virtual_size")
       string width_s, height_s
@@ -547,6 +547,8 @@ namespace framebuffer:
         fprintf(stderr, "Could not get screen vinfo for %s\n", "/dev/fb0")
         return
 
+      self.rotate = vinfo.rotate
+
       debug "XRES", vinfo.xres, "YRES", vinfo.yres, "BPP", vinfo.bits_per_pixel, "GRAYSCALE", vinfo.grayscale
 
     void wait_for_redraw(uint32_t update_marker):
@@ -636,7 +638,6 @@ namespace framebuffer:
       self.height = h
       self.byte_size = self.width * self.height * sizeof(remarkable_color)
       self.fbmem = (remarkable_color*) swtfb.fbmem
-      self.fd = -1
 
     int perform_redraw(bool full_screen=false):
       r := self.dirty_area
@@ -706,6 +707,24 @@ namespace framebuffer:
       retval := ioctl(self.fd, FBIOPUT_VSCREENINFO, &vinfo);
 
 
+  static void set_rm_version():
+    #ifdef REMARKABLE
+    int fd = open("/dev/fb0", O_RDWR)
+
+    fb_var_screeninfo vinfo;
+    if (ioctl(fd, FBIOGET_VSCREENINFO, &vinfo)):
+      fprintf(stderr, "Could not get screen vinfo for %s\n", "/dev/fb0")
+    else:
+      if vinfo.xres == 260:
+        RM_VERSION = 2
+      else:
+        RM_VERSION = 1
+
+    debug "SET VERSION TO", RM_VERSION
+
+    close(fd)
+    #endif
+
   static shared_ptr<FB> _FB
 
   // function: framebuffer::get
@@ -716,10 +735,15 @@ namespace framebuffer:
     if _FB != nullptr && _FB.get() != nullptr:
       return _FB
 
-    #ifdef REMARKABLE2
-    _FB = make_shared<framebuffer::SwtFB>(DISPLAYWIDTH, DISPLAYHEIGHT)
-    #elif REMARKABLE
-    _FB = make_shared<framebuffer::RemarkableFB>()
+
+    #if REMARKABLE
+    set_rm_version()
+    if RM_VERSION == 1:
+      _FB = make_shared<framebuffer::RemarkableFB>()
+    else if RM_VERSION == 2:
+      _FB = make_shared<framebuffer::SwtFB>(DISPLAYWIDTH, DISPLAYHEIGHT)
+    else:
+      debug "UNSUPPORTED RM MODEL"
     #elif DEV
     _FB = make_shared<framebuffer::FileFB>()
     #else

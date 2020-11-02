@@ -98,8 +98,7 @@ static uint16_t *get_shared_buffer(string name = "/swtfb.01") {
   ftruncate(fd, BUF_SIZE);
   uint16_t *mem =
       (uint16_t *)mmap(NULL, BUF_SIZE, PROT_WRITE, MAP_SHARED, fd, 0);
-  printf("OPENED SHARED MEM: /dev/shm%s at %x\n", name.c_str(), mem);
-  printf("errno: %i\n", errno);
+  printf("OPENED SHARED MEM: /dev/shm%s at %x, errno: %i\n", name.c_str(), mem, errno);
   return mem;
 }
 

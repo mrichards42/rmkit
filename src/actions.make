@@ -25,11 +25,11 @@ clean:
 
 compile_arm: export CPP_FLAGS += -O2
 compile_arm:
-	CXX=${CXX_BIN} okp ${OKP_FLAGS} -- -DREMARKABLE2=1 -DREMARKABLE=1 ${CPP_FLAGS}
+	CXX=${CXX_BIN} okp ${OKP_FLAGS} -- -DREMARKABLE=1 ${CPP_FLAGS}
 
 compile_arm_fast: export CPP_FLAGS += -O0 -g
 compile_arm_fast:
-	CXX=${CXX_BIN} okp ${OKP_FLAGS} -- -DREMARKABLE2=1 -DREMARKABLE=1 ${CPP_FLAGS}
+	CXX=${CXX_BIN} okp ${OKP_FLAGS} -- -DREMARKABLE=1 ${CPP_FLAGS}
 
 compile_dev: export CPP_FLAGS += -O0 -g
 compile_dev:
