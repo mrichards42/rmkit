@@ -29,6 +29,7 @@ using json = nlohmann::json
 
 HOST := getenv("HOST") ? getenv("HOST") : "rmkit.dev"
 PORT := getenv("PORT") ? getenv("PORT") : "65432"
+string ROOM = "default"
 
 using PLS::Observable
 class AppState:
@@ -112,10 +113,12 @@ class JSONSocket:
             self.lock.lock()
             self._connected = true
             self.lock.unlock()
+            STATE.room = ROOM
             break
         debug "(re)connecting...", err, errno
         self.lock.lock()
         close(self.sockfd)
+        self.sockfd = socket(AF_INET, SOCK_STREAM, 0)
         self._connected = false
         self.lock.unlock()
         sleep(1)
@@ -271,10 +274,11 @@ class App:
     button_bar->pack_end(room_label)
 
     STATE.room(PLS_DELEGATE(self.join_room))
-    room_button->join("default")
+    room_button->join(ROOM)
 
 
   void join_room(string room):
+    ROOM = room
     // we are not connected to socket just yet
     json j
     j["type"] = TJOIN
@@ -282,6 +286,7 @@ class App:
     socket->write(j)
     // hit URL for downloading room image
     url := "http://rmkit.dev:65431/room/" + room
+    // url := "https://draw.rmkit.dev"
     room_file := "/tmp/room_" + room
     curl_cmd := "curl " + url  + " > " + room_file
     ret := system(curl_cmd.c_str())
@@ -290,6 +295,7 @@ class App:
         debug "ERROR WITH CURL?"
     else:
         debug "DISPLAYING IMAGE"
+        // TODO: validate this image exists
         self.note->vfb->load_from_png(room_file)
         ui::MainLoop::full_refresh()
 
@@ -297,9 +303,10 @@ class App:
     // pressing any button will clear the screen
     if ev.key == KEY_LEFT:
       debug "CLEARING SCREEN"
-      note->vfb->clear_screen()
-      ui::MainLoop::fb->clear_screen()
-      button_bar->refresh()
+      // send clear action to the server
+      json j
+      j["type"] = TCLEAR
+      socket->write(j)
 
   def handle_server_response():
     socket->lock.lock()
@@ -311,8 +318,9 @@ class App:
           note->dirty = 1
           button_bar->refresh()
         else if j["type"] == TCLEAR:
-          // TODO
-          pass
+          note->vfb->clear_screen()
+          ui::MainLoop::fb->clear_screen()
+          button_bar->refresh()
         else:
           debug "unknown message type"
       catch(...):
