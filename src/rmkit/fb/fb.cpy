@@ -152,6 +152,9 @@ namespace framebuffer:
       return
 
     inline void _set_pixel(remarkable_color *dst, int x, int y, remarkable_color c):
+      *dst = self.dither(x, y, color::to_float(c));
+
+    inline void _set_pixel_float(remarkable_color *dst, int x, int y, float c):
       *dst = self.dither(x, y, c);
 
     inline void _set_pixel(int x, int y, remarkable_color c):
@@ -318,10 +321,13 @@ namespace framebuffer:
 
           if src[i] != alpha:
             if image.channels >= 3:
-              self._set_pixel(&ptr[i], i, j, to_rgb565((char *) src, i*image.channels))
+              unsigned char * c = ((unsigned char*)src) + i*image.channels
+              float color = c[0] * (0.21 / 255) \
+                          + c[1] * (0.72 / 255) \
+                          + c[2] * (0.07 / 255)
+              self._set_pixel_float(&ptr[i], i, j, color)
             else if image.channels == 1:
-              grayscale_to_rgb32(src[i], src_val)
-              self._set_pixel(&ptr[i], i, j, to_rgb565(src_val, 0))
+              self._set_pixel_float(&ptr[i], i, j, src[i] / 255.)
             else:
               self._set_pixel(&ptr[i], i, j, src[i])
 
