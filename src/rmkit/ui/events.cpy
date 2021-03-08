@@ -217,7 +217,7 @@ namespace ui:
 
   class GESTURE_EVENTS_DELEGATE:
     private:
-    std::unique_ptr<GESTURE_EVENTS> gestures;
+    std::shared_ptr<GESTURE_EVENTS> gestures;
     MOUSE_EVENTS * mouse;
 
     GESTURE_EVENTS & get():
